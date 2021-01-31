@@ -1,0 +1,139 @@
+import cv2
+import math
+import numpy as np
+import time
+import networktables
+import threading
+
+
+import threading
+from networktables import NetworkTables
+cond=threading.Condition()
+notified=[False]
+
+def connectionListener(connected,info):
+    print(info, '; connected=%s' % connected)
+    with cond:
+        notified[0]=True
+        cond.notify()
+NetworkTables.initialize(server='10.77.81.2')
+NetworkTables.addConnectionListener(connectionListener,immediateNotify=True)
+with cond:
+    print("waiting")
+    if not notified[0]:
+        cond.wait()
+print("Connected!")
+table=NetworkTables.getTable('SmartDashboard')
+
+
+
+
+arealis=[]
+area1=[]
+area2=[]
+poslis=[]
+ratio=0.95
+c=0
+cap = cv2.VideoCapture(0)
+cap.set(3,320)
+cap.set(4,240)
+cap.set(15,-8)
+while True:
+   cx1=[]
+   cx2=[]
+   _, frame = cap.read()
+   frame=frame[60:180,0:640]
+   hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+
+   lower_blue = np.array([30, 100, 100])
+   upper_blue = np.array([85, 255,255])
+   thresh = cv2.inRange(hsv, lower_blue, upper_blue)
+ 
+   contours,hierarchy= cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+   
+   if len(contours)>0:
+       
+       for contour in contours:
+           cv2.drawContours(frame, contour, -1, (0,0,255), 3)
+           area = cv2.contourArea(contour)
+           if area > 500:
+               arealis.append(area)
+               arealis.sort()
+               arealis.reverse()
+
+   if len(arealis)>=2:
+       for contour in contours:
+           
+           area=cv2.contourArea(contour)
+           if area>500 and (area==arealis[1] or area==arealis[0]):
+               cv2.drawContours(frame, contour, -1, (0, 0, 255), 3)
+               cnt = contour
+               M=cv2.moments(cnt)
+               if M['m00']!=0:
+                   cx=int(M['m10']/M['m00'])
+                   cy=int(M['m01']/M['m00'])
+               if 'cx' in locals() and 'cy' in locals():
+                   cv2.circle(frame,(cx,cy),int(math.sqrt(area/3.14)),(255,0,0),2)
+                   if area==arealis[0]:
+                       area1.append(cx)
+                       area1.append(cy)
+                       area1.append(area)
+                       cx1.append(cx)
+                       rows,cols=thresh.shape[:2]
+                       [vx,vy,x,y] = cv2.fitLine(contour, cv2.DIST_L2,0,0.01,0.01)
+                       lefty = int((-x*vy/vx) + y)
+                       righty = int(((cols-x)*vy/vx)+y)
+                       cv2.line(frame,(cols-1,righty),(0,lefty),(0,255,0),2)
+                       cx1.append(lefty)
+                       cx1.append(righty)
+                   else:
+                       area2.append(cx)
+                       area2.append(cy)
+                       area2.append(area)
+                       cx2.append(cx)
+                       rows,cols=thresh.shape[:2]
+                       [vx,vy,x,y] = cv2.fitLine(contour, cv2.DIST_L2,0,0.01,0.01)
+                       lefty = int((-x*vy/vx) + y)
+                       righty = int(((cols-x)*vy/vx)+y)
+                       if abs(lefty)>100000:
+                           lefty=(lefty/abs(lefty))*10000
+                       if abs(righty)>100000:
+                           righty=(righty/abs(righty))*10000
+                       cv2.line(frame,(cols-1,righty),(0,lefty),(0,255,0),2)
+                       cx2.append(lefty)
+                       cx2.append(righty)
+   objectdet=False
+   if len(cx1)>=3 and len(cx2)>=3:
+      if cx1[0]<cx2[0] and cx1[1]>cx1[2] and cx2[1]<cx2[2]:
+         objectdet=True
+      elif cx1[0]>cx2[0] and cx1[1]<cx1[2] and cx2[1]>cx2[2]:
+         objectdet=True
+
+   if objectdet==True:
+      if len(arealis)>=2 and len(area2)>=3 and len(area1)>=3:
+          if abs(lefty)>100000:
+              lefty=[lefty/abs(lefty)]*10000
+          if abs(righty)>100000:
+              righty=[righty/abs(righty)]*10000
+          cx=int((area1[0]+area2[0])/2)
+          cy=int((area1[1]+area2[1])/2)
+          cv2.line(frame,(cx,0),(cx,720),(255,0,0),1)
+          cv2.line(frame,(0,cy),(1280,cy),(255,0,0),1)
+          print(cx)
+          writex=table.putNumber('x',cx)
+   else:
+       print("NO OBJECT DETECTED")
+       writex=table.putNumber('x',160)
+   
+   cv2.imshow("Frame", frame)
+   cv2.imshow("Mask", thresh)
+   key = cv2.waitKey(1)
+   if key == 27:
+       break
+   arealis=[]
+   poslis=[]
+   area1=[]
+   area2=[]
+cap.release()
+cv2.destroyAllWindows()
